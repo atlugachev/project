@@ -1,136 +1,476 @@
 <?php
 session_start();
 
+// Подключение к базе данных
 $dsn = 'mysql:host=localhost;dbname=u68691;charset=utf8';
 $username = 'u68691';
 $password = '9388506';
+
 try {
     $pdo = new PDO($dsn, $username, $password);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 } catch (PDOException $e) {
-    die("Ошибка подключения: " . $e->getMessage());
+    die("Ошибка подключения к базе данных: " . $e->getMessage());
 }
 
-$errors = isset($_SESSION['form_errors']) ? $_SESSION['form_errors'] : [];
-$values = isset($_SESSION['form_values']) ? $_SESSION['form_values'] : [];
-$credentials = isset($_SESSION['credentials']) ? $_SESSION['credentials'] : null;
-
-unset($_SESSION['form_errors']);
-unset($_SESSION['form_values']);
-
-if (isset($_SESSION['user_id'])) {
-    $stmt = $pdo->prepare("SELECT * FROM users6 WHERE id = ?");
-    $stmt->execute([$_SESSION['user_id']]);
-    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+// Обработка входа
+if (isset($_POST['login'])) {
+    $email = $_POST['email'];
+    $password = $_POST['password'];
     
-    $stmt = $pdo->prepare("SELECT pl.name FROM user_languages6 ul JOIN programming_languages6 pl ON ul.language_id = pl.id WHERE ul.user_id = ?");
-    $stmt->execute([$_SESSION['user_id']]);
-    $user_languages = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE email = ?");
+    $stmt->execute([$email]);
+    $user = $stmt->fetch();
     
-    $values = array_merge($user, ['languages' => $user_languages]);
+    if ($user && password_verify($password, $user['password'])) {
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['user_name'] = $user['name'];
+        $_SESSION['logged_in'] = true;
+        header("Location: index.php");
+        exit();
+    } else {
+        $login_error = "Неверный email или пароль";
+    }
 }
+
+// Обработка регистрации
+if (isset($_POST['register'])) {
+    $name = $_POST['name'];
+    $email = $_POST['email'];
+    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+    
+    $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
+    $stmt->execute([$email]);
+    
+    if ($stmt->rowCount() > 0) {
+        $register_error = "Пользователь с таким email уже существует";
+    } else {
+        $stmt = $pdo->prepare("INSERT INTO users (name, email, password) VALUES (?, ?, ?)");
+        $stmt->execute([$name, $email, $password]);
+        $_SESSION['user_id'] = $pdo->lastInsertId();
+        $_SESSION['user_name'] = $name;
+        $_SESSION['logged_in'] = true;
+        header("Location: index.php");
+        exit();
+    }
+}
+
+// Обработка выхода
+if (isset($_GET['logout'])) {
+    session_destroy();
+    header("Location: index.php");
+    exit();
+}
+
+// Получение всех объявлений
+$stmt = $pdo->query("SELECT cars.*, users.name as user_name FROM cars JOIN users ON cars.user_id = users.id ORDER BY created_at DESC");
+$user_cars = $stmt->fetchAll();
 ?>
 
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>АвтоПродажа - Продажа автомобилей</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;700&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T&B - Продажа эксклюзивных автомобилей</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Arial', sans-serif;
+        }
+        
+        body {
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        header {
+            background-color: #000;
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+        
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            flex-grow: 1;
+            text-align: center;
+        }
+        
+        .auth-buttons {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .auth-btn {
+            background-color: transparent;
+            color: white;
+            border: 1px solid white;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .auth-btn:hover {
+            background-color: white;
+            color: black;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 200;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal-content {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            width: 400px;
+            max-width: 90%;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        .close-btn {
+            float: right;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        
+        h2 {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        input, textarea, select {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        
+        .submit-btn {
+            background-color: #000;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        
+        .submit-btn:hover {
+            background-color: #333;
+        }
+        
+        .error {
+            color: red;
+            font-size: 14px;
+            margin-top: -10px;
+            margin-bottom: 10px;
+        }
+        
+        .cars-container {
+            padding: 40px 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .car-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 30px;
+        }
+        
+        .car-card {
+            background-color: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .car-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .car-image {
+            width: 100%;
+            height: 250px;
+            object-fit: cover;
+        }
+        
+        .car-info {
+            padding: 20px;
+        }
+        
+        .car-title {
+            font-size: 22px;
+            margin-bottom: 10px;
+            color: #222;
+        }
+        
+        .car-description {
+            color: #666;
+            line-height: 1.5;
+            margin-bottom: 15px;
+        }
+        
+        .car-specs {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+        
+        .spec-item {
+            text-align: center;
+        }
+        
+        .spec-value {
+            font-weight: bold;
+            color: #000;
+        }
+        
+        .spec-label {
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .user-photos {
+            padding: 40px 20px;
+            background-color: #eee;
+        }
+        
+        .section-title {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+        
+        .user-photos-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .user-photo {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 5px;
+            transition: transform 0.3s;
+        }
+        
+        .user-photo:hover {
+            transform: scale(1.03);
+        }
+        
+        .profile-container {
+            max-width: 1000px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        
+        .profile-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        
+        .add-car-btn {
+            background-color: #000;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        
+        .add-car-btn:hover {
+            background-color: #333;
+        }
+        
+        .add-car-form {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 40px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        
+        .price {
+            color: #d00;
+            font-weight: bold;
+            font-size: 20px;
+        }
+        
+        .author {
+            color: #666;
+            font-style: italic;
+            margin-top: 10px;
+        }
+    </style>
 </head>
 <body>
     <header>
-        <h1>АвтоПродажа</h1>
-        <p>Лучшие автомобили по выгодным ценам</p>
+        <div class="logo">T&B</div>
+        <div class="auth-buttons">
+            <?php if (isset($_SESSION['logged_in'])): ?>
+                <a href="profile.php" class="auth-btn">Профиль</a>
+                <a href="?logout" class="auth-btn">Выйти</a>
+            <?php else: ?>
+                <button class="auth-btn" id="loginBtn">Вход</button>
+                <button class="auth-btn" id="registerBtn">Регистрация</button>
+            <?php endif; ?>
+        </div>
     </header>
 
-    <main>
-        <?php if (isset($_SESSION['user_id'])): ?>
-            <section class="user-section">
-                <h2>Личный кабинет</h2>
-                <p><a href="save.php?action=logout">Выйти</a></p>
-                
-                <?php if (isset($_GET['success']) && $_GET['success'] == 1): ?>
-                    <div class="success-box">Данные успешно обновлены!</div>
-                <?php endif; ?>
-                
-                <?php if (!empty($errors)): ?>
-                    <div class="error-box">
-                        <?php foreach ($errors as $field => $message): ?>
-                            <p>Ошибка в поле '<?=$field?>': <?=$message?></p>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-                
-                <form action="save.php?action=update" method="POST">
-                    <!-- Поля формы остаются такими же, но с автомобильной тематикой -->
-                    <div class="form-group">
-                        <label for="fio">ФИО:</label>
-                        <input type="text" id="fio" name="fio" value="<?= htmlspecialchars($values['fio'] ?? '') ?>">
-                    </div>
-                    <!-- Остальные поля формы -->
-                </form>
-            </section>
-
-        <?php elseif (isset($_SESSION['admin_id'])): ?>
-            <section class="admin-section">
-                <h2>Панель администратора</h2>
-                <p><a href="save.php?action=logout">Выйти</a></p>
-                <p><a href="admin.php">Управление клиентами</a></p>
-            </section>
-
-        <?php else: ?>
-            <section class="login-section">
-                <h2>Вход для клиентов</h2>
-                
-                <?php if (!empty($errors)): ?>
-                    <div class="error-box">
-                        <?php foreach ($errors as $message): ?>
-                            <p><?= htmlspecialchars($message) ?></p>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-                
-                <form action="save.php?action=login" method="POST">
-                    <!-- Форма входа -->
-                </form>
-            </section>
-
-            <section class="cars-section">
-                <h2>Наши автомобили</h2>
-                <div class="car-list">
-                    <div class="car-item">
-                        <h3>BMW X5</h3>
-                        <p>Год: 2020 | Пробег: 50 000 км</p>
-                        <p>Цена: 4 500 000 ₽</p>
-                    </div>
-                    <!-- Другие автомобили -->
-                </div>
-            </section>
-        <?php endif; ?>
-    </main>
-
-    <?php if (!isset($_SESSION['user_id']) && !isset($_SESSION['admin_id'])): ?>
-        <section class="registration-section">
-            <h2>Регистрация нового клиента</h2>
-            
-            <?php if ($credentials): ?>
-                <div class="success-box">
-                    <p>Ваши учетные данные:</p>
-                    <p>Логин: <?= htmlspecialchars($credentials['login']) ?></p>
-                    <p>Пароль: <?= htmlspecialchars($credentials['password']) ?></p>
-                </div>
+    <!-- Модальное окно входа -->
+    <div class="modal" id="loginModal">
+        <div class="modal-content">
+            <span class="close-btn" id="closeLogin">&times;</span>
+            <h2>Вход</h2>
+            <?php if (isset($login_error)): ?>
+                <div class="error"><?php echo $login_error; ?></div>
             <?php endif; ?>
-            
-            <form action="save.php?action=register" method="POST">
-                <!-- Форма регистрации (аналогичная оригиналу) -->
+            <form id="loginForm" method="POST">
+                <input type="email" name="email" placeholder="Email" required>
+                <input type="password" name="password" placeholder="Пароль" required>
+                <button type="submit" name="login" class="submit-btn">Войти</button>
             </form>
-        </section>
-    <?php endif; ?>
+        </div>
+    </div>
 
-    <footer>
-        <p>© 2023 АвтоПродажа. Все права защищены.</p>
-    </footer>
+    <!-- Модальное окно регистрации -->
+    <div class="modal" id="registerModal">
+        <div class="modal-content">
+            <span class="close-btn" id="closeRegister">&times;</span>
+            <h2>Регистрация</h2>
+            <?php if (isset($register_error)): ?>
+                <div class="error"><?php echo $register_error; ?></div>
+            <?php endif; ?>
+            <form id="registerForm" method="POST">
+                <input type="text" name="name" placeholder="Имя" required>
+                <input type="email" name="email" placeholder="Email" required>
+                <input type="password" name="password" placeholder="Пароль" required>
+                <input type="password" name="confirm_password" placeholder="Подтвердите пароль" required>
+                <button type="submit" name="register" class="submit-btn">Зарегистрироваться</button>
+            </form>
+        </div>
+    </div>
+        <!-- Главная страница -->
+        <div class="cars-container">
+            <h1 class="section-title">Эксклюзивные автомобили</h1>
+            <div class="car-grid">
+                <?php foreach ($user_cars as $car): ?>
+                    <div class="car-card">
+                        <?php if ($car['image_path']): ?>
+                            <img src="<?php echo $car['image_path']; ?>" alt="<?php echo htmlspecialchars($car['title']); ?>" class="car-image">
+                        <?php else: ?>
+                            <div class="car-image" style="background-color: #eee; display: flex; align-items: center; justify-content: center;">
+                                <span>Нет изображения</span>
+                            </div>
+                        <?php endif; ?>
+                        <div class="car-info">
+                            <h3 class="car-title"><?php echo htmlspecialchars($car['title']); ?></h3>
+                            <div class="price">$<?php echo number_format($car['price'], 0, '.', ' '); ?></div>
+                            <p class="car-description"><?php echo htmlspecialchars($car['description']); ?></p>
+                            <div class="car-specs">
+                                <div class="spec-item">
+                                    <div class="spec-value"><?php echo $car['year']; ?></div>
+                                    <div class="spec-label">Год выпуска</div>
+                                </div>
+                                <div class="spec-item">
+                                    <div class="spec-value"><?php echo htmlspecialchars($car['engine']); ?></div>
+                                    <div class="spec-label">Двигатель</div>
+                                </div>
+                                <div class="spec-item">
+                                    <div class="spec-value"><?php echo $car['power']; ?> HP</div>
+                                    <div class="spec-label">Мощность</div>
+                                </div>
+                            </div>
+                            <div class="author">Продавец: <?php echo htmlspecialchars($car['user_name']); ?></div>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+
+    <script>
+        // Обработчики для модальных окон
+        const loginBtn = document.getElementById('loginBtn');
+        const registerBtn = document.getElementById('registerBtn');
+        const loginModal = document.getElementById('loginModal');
+        const registerModal = document.getElementById('registerModal');
+        const closeLogin = document.getElementById('closeLogin');
+        const closeRegister = document.getElementById('closeRegister');
+        
+        if (loginBtn) loginBtn.addEventListener('click', () => {
+            loginModal.style.display = 'flex';
+        });
+        
+        if (registerBtn) registerBtn.addEventListener('click', () => {
+            registerModal.style.display = 'flex';
+        });
+        
+        if (closeLogin) closeLogin.addEventListener('click', () => {
+            loginModal.style.display = 'none';
+        });
+        
+        if (closeRegister) closeRegister.addEventListener('click', () => {
+            registerModal.style.display = 'none';
+        });
+        
+        // Закрытие модальных окон при клике вне их области
+        window.addEventListener('click', (e) => {
+            if (e.target === loginModal) {
+                loginModal.style.display = 'none';
+            }
+            if (e.target === registerModal) {
+                registerModal.style.display = 'none';
+            }
+        });
+    </script>
 </body>
 </html>
